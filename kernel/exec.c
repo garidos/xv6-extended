@@ -128,6 +128,8 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+    //write_on_swap((uint64)pagetable);
+
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:

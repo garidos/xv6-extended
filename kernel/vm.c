@@ -21,7 +21,7 @@ kvmmake(void)
 {
   pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t) kalloc();
+  kpgtbl = (pagetable_t) kalloc(0);
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
@@ -94,7 +94,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+      if(!alloc || (pagetable = (pde_t*)kalloc(1)) == 0) // TODO - should be swappable?
         return 0;
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
@@ -119,6 +119,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
   if(pte == 0)
     return 0;
   if((*pte & PTE_V) == 0)
+      // TODO - handle this, as well as the same case in walk  function
     return 0;
   if((*pte & PTE_U) == 0)
     return 0;
@@ -198,7 +199,7 @@ pagetable_t
 uvmcreate()
 {
   pagetable_t pagetable;
-  pagetable = (pagetable_t) kalloc();
+  pagetable = (pagetable_t) kalloc(0);
   if(pagetable == 0)
     return 0;
   memset(pagetable, 0, PGSIZE);
@@ -215,7 +216,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 
   if(sz >= PGSIZE)
     panic("uvmfirst: more than a page");
-  mem = kalloc();
+  mem = kalloc(0); // TODO - should this be swappable? no?
   memset(mem, 0, PGSIZE);
   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
@@ -234,7 +235,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += PGSIZE){
-    mem = kalloc();
+    mem = kalloc(1);    // TODO - should be swappable?
     if(mem == 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -318,7 +319,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    if((mem = kalloc(1)) == 0)  // TODO - should be swappable?
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){

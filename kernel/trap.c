@@ -16,10 +16,13 @@ void kernelvec();
 
 extern int devintr();
 
+int timer_tick;
+
 void
 trapinit(void)
 {
   initlock(&tickslock, "time");
+  timer_tick = 0;
 }
 
 // set up to take exceptions and traps while in the kernel.
@@ -49,7 +52,13 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
+
+  // TODO - I have to add a handler for PF somewhere in here
+  // here, PF is raised only when a page was swapped and is not present in memory, so, the handling of the PF will consist
+  // of finding out which page was it that caused the PF, finding it on swap disk, and loading it back in memory
+  // if memory is full, before loading the page back in, we will have to make space for it, and swap some other page on to swap disk
+  // this last part should be handled by kalloc?
+
   if(r_scause() == 8){
     // system call
 
@@ -77,8 +86,11 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2 && timer_tick++ == 2) {
+      timer_tick = 0;
+      update_ref_cnts();
+      yield();
+  }
 
   usertrapret();
 }
@@ -151,8 +163,11 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
-    yield();
+  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING && timer_tick++ == 2) {
+      timer_tick = 0;
+      update_ref_cnts();
+      yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

@@ -35,7 +35,7 @@ proc_mapstacks(pagetable_t kpgtbl)
   struct proc *p;
   
   for(p = proc; p < &proc[NPROC]; p++) {
-    char *pa = kalloc();
+    char *pa = kalloc(0);
     if(pa == 0)
       panic("kalloc");
     uint64 va = KSTACK((int) (p - proc));
@@ -126,7 +126,7 @@ found:
   p->state = USED;
 
   // Allocate a trapframe page.
-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+  if((p->trapframe = (struct trapframe *)kalloc(0)) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;

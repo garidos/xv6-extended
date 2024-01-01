@@ -62,9 +62,17 @@ void            ramdiskintr(void);
 void            ramdiskrw(struct buf*);
 
 // kalloc.c
-void*           kalloc(void);
+void*           kalloc(int swappable);
+void            help_kfree(void *);
 void            kfree(void *);
 void            kinit(void);
+void*           help_kalloc(void);
+void            init_page_table(void);
+void            page_set_s(int page_num, int swappable);
+void            update_ref_cnts(void);
+void            page_add_ref(int page_num);
+void            update_ref_cnts(void);
+int             find_victim(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -189,6 +197,11 @@ void            virtio_disk_rw(int id, struct buf *, int, int);
 void            virtio_disk_intr(int id);
 void            write_block(int blockno, uchar* data, int busy_wait);
 void            read_block(int blockno, uchar* data, int busy_wait);
+void            init_swap_disk();
+uint32          allocate_swap_block();
+void            free_swap_block(uint32 blockNo);
+uint32          write_on_swap(uint64 pa);
+void            read_from_swap(uint32 blockNo, uint64 pa);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
