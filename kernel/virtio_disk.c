@@ -126,9 +126,9 @@ virtio_disk_init(int id, char * name)
       panic_concat(2, name, ": virtio disk max queue too short");
 
   // allocate and zero queue memory.
-  disk[id].desc = kalloc(0);
-  disk[id].avail = kalloc(0);
-  disk[id].used = kalloc(0);
+  disk[id].desc = kalloc(0,0,0);
+  disk[id].avail = kalloc(0,0,0);
+  disk[id].used = kalloc(0,0,0);
   if(!disk[id].desc || !disk[id].avail || !disk[id].used)
       panic_concat(2, name, ": virtio disk kalloc");
   memset(disk[id].desc, 0, PGSIZE);
@@ -158,7 +158,7 @@ virtio_disk_init(int id, char * name)
   *R(id, VIRTIO_MMIO_STATUS) = status;
 
   if (id == VIRTIO1_ID) {
-    swap_buffer = kalloc(0);
+    swap_buffer = kalloc(0,0,0);
     if (!swap_buffer) {
       panic("virtio_disk_init: kalloc of swap_buffer failed");
     }
@@ -401,7 +401,7 @@ init_swap_disk() {
 
     // allocate pages for bit vector, and fill them with 1's
     for ( int i = 0; i  < BITVECSIZEPAGES ; i++) {
-        bit_vector.bits[i] = kalloc(0);
+        bit_vector.bits[i] = kalloc(0,0,0);
         memset(bit_vector.bits[i], -1, PGSIZE);
     }
 
@@ -456,8 +456,8 @@ free_swap_block(uint32 blockNo) {
 
     acquire(&bit_vector.bitvector_lock);
 
-    uint32 page = (blockNo >> 3) / PGSIZE;
-    uint32 byte = (blockNo >> 3) % PGSIZE;
+    uint32 page = blockNo / (PGSIZE * 8);
+    uint32 byte = blockNo % PGSIZE;
     uint32 bit = blockNo % 8;
 
     bit_vector.bits[page][byte] |= (1 << bit);
@@ -480,19 +480,24 @@ write_on_swap(uint64 pa) {
     uint32 blockNo = allocate_swap_block();
     if ( blockNo == -1 ) {
         // no free space left, exit the program
-        // panic?
+        //panic("swap disk full");
+        return -1;
     }
 
     // lock
     uchar* addr = (uchar*)pa;
-    int blk = blockNo * 4;
+    int blk = blockNo * 4; // 4 swap disk blocks are needed to store one page
     for ( int i = 0; i < 4; i++ ) {
 
         write_block(blk, addr, 0);
 
         blk++;
-        addr += PGSIZE;
+        addr += PGSIZE / 4;
+        // TODO - document how swap disk blocks are being tracked
     }
+
+    // quarters of a page are stored on swap disk in little endian
+    // swap disk block with lower number stores lower part of the page
 
     // unlock
     return blockNo;
@@ -515,7 +520,7 @@ read_from_swap(uint32 blockNo, uint64 pa) {
         read_block(blk, addr, 0);
 
         blk++;
-        addr += PGSIZE;
+        addr += PGSIZE / 4;
     }
 
     free_swap_block(blockNo);

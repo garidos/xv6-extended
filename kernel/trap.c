@@ -59,21 +59,29 @@ usertrap(void)
   // if memory is full, before loading the page back in, we will have to make space for it, and swap some other page on to swap disk
   // this last part should be handled by kalloc?
 
-  if(r_scause() == 8){
-    // system call
+  if(r_scause() == 8) {
+      // system call
 
-    if(killed(p))
-      exit(-1);
+      if (killed(p))
+          exit(-1);
 
-    // sepc points to the ecall instruction,
-    // but we want to return to the next instruction.
-    p->trapframe->epc += 4;
+      // sepc points to the ecall instruction,
+      // but we want to return to the next instruction.
+      p->trapframe->epc += 4;
 
-    // an interrupt will change sepc, scause, and sstatus,
-    // so enable only now that we're done with those registers.
-    intr_on();
+      // an interrupt will change sepc, scause, and sstatus,
+      // so enable only now that we're done with those registers.
+      intr_on();
 
-    syscall();
+      syscall();
+  } else if (r_scause() == 0xf || r_scause() == 0xc || r_scause() == 0xd) { // page faults
+      // It's not important which type of PF it is?
+      // stval holds the virtual address that caused PF
+      if ( handle_page_fault() ) {
+          printf("usertrap(): unresolved page fault scause=%p pid=%d\n", r_scause(), p->pid);
+          printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+          setkilled(p);
+      }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -157,6 +165,7 @@ kerneltrap()
     panic("kerneltrap: interrupts enabled");
 
   if((which_dev = devintr()) == 0){
+      // PF in kernel should never happen
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
@@ -236,3 +245,42 @@ devintr()
   }
 }
 
+// returns 0 if PF was resolved, 1 otherwise
+int
+handle_page_fault() {
+
+    uint64 va = r_stval();
+    struct proc* p = myproc();
+
+    // get the pte corresponding to the virtual address that caused PF
+    // check if the page was swapped
+    // if not, return 1
+    // get the number of block on swap disk that stores this page
+    // allocate the block in memory to store the page
+    // load the page from disk in to the allocated block
+    // update pte ( set valid, reset D bit, insert physical block number  )
+
+    pte_t * pte = walk(p->pagetable, va, 0);
+    if ( pte == 0 ) return 1;
+
+    if ( (*pte & PTE_D) == 0 ) {
+        if (*pte & PTE_V) return 2;
+        return 1;
+    }
+
+    uint32 blockNo = *pte >> 10;
+    char* free_page = (char*)kalloc(1, p->pid, va);
+
+    read_from_swap(blockNo, (uint64)free_page);
+
+    // set V bit
+    *pte |= PTE_V;
+    // reset D bit
+    *pte &= ~PTE_D;
+    // add physical block number
+    // clear old value first
+    *pte &= ~(~(uint64)0 << 10);
+    *pte |= PA2PTE((uint64)free_page);
+
+    return 0;
+}

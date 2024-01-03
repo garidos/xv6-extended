@@ -21,7 +21,7 @@ kvmmake(void)
 {
   pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t) kalloc(0);
+  kpgtbl = (pagetable_t) kalloc(0,0,0);
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
@@ -94,7 +94,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc(1)) == 0) // TODO - should be swappable?
+      if(!alloc || (pagetable = (pde_t*)kalloc(0,0,0)) == 0) // this allocates page table and not actual memory page, so not swappable
         return 0;
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
@@ -175,21 +175,31 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   uint64 a;
   pte_t *pte;
 
+
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
-    if(PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
-    }
-    *pte = 0;
+      int swapped = 0;
+      if((pte = walk(pagetable, a, 0)) == 0) {
+          panic("uvmunmap: walk");
+      }
+      if((*pte & PTE_V) == 0 && (*pte & PTE_D) == PTE_D) {
+          swapped = 1;
+      } else if ( (*pte & PTE_V) == 0 ){
+          panic("uvmunmap: not mapped");
+      }
+      if(PTE_FLAGS(*pte) == PTE_V) {
+          panic("uvmunmap: not a leaf");
+      }
+      if(do_free && swapped ){
+          uint32 blockNo = *pte >> 10;
+          free_swap_block(blockNo);
+      } else if ( do_free ) {
+          uint64 pa = PTE2PA(*pte);
+          kfree((void*)pa);
+      }
+      *pte = 0;
   }
 }
 
@@ -199,7 +209,7 @@ pagetable_t
 uvmcreate()
 {
   pagetable_t pagetable;
-  pagetable = (pagetable_t) kalloc(0);
+  pagetable = (pagetable_t) kalloc(0,0,0);
   if(pagetable == 0)
     return 0;
   memset(pagetable, 0, PGSIZE);
@@ -216,7 +226,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 
   if(sz >= PGSIZE)
     panic("uvmfirst: more than a page");
-  mem = kalloc(0); // TODO - should this be swappable? no?
+  mem = kalloc(0,0,0); // TODO - should this be swappable? no?
   memset(mem, 0, PGSIZE);
   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
@@ -225,7 +235,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+uvmalloc(pagetable_t pagetable, int pid, uint64 oldsz, uint64 newsz, int xperm)
 {
   char *mem;
   uint64 a;
@@ -235,7 +245,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += PGSIZE){
-    mem = kalloc(1);    // TODO - should be swappable?
+    mem = kalloc(1,pid,a);    // TODO - should be swappable?
     if(mem == 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -305,7 +315,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+uvmcopy(pagetable_t old, pagetable_t new, int pid, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
@@ -315,11 +325,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0) // TODO - check if the page is on disk and load if so
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc(1)) == 0)  // TODO - should be swappable?
+    if((mem = kalloc(1,pid,i)) == 0)  // TODO - should be swappable?
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){

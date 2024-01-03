@@ -454,7 +454,7 @@ sys_exec(void)
       argv[i] = 0;
       break;
     }
-    argv[i] = kalloc(0);
+    argv[i] = kalloc(0,0,0);
     if(argv[i] == 0)
       goto bad;
     if(fetchstr(uarg, argv[i], PGSIZE) < 0)

@@ -62,17 +62,18 @@ void            ramdiskintr(void);
 void            ramdiskrw(struct buf*);
 
 // kalloc.c
-void*           kalloc(int swappable);
+void*           kalloc(int swappable, int pid, uint64 va);
 void            help_kfree(void *);
 void            kfree(void *);
 void            kinit(void);
 void*           help_kalloc(void);
 void            init_page_table(void);
-void            page_set_s(int page_num, int swappable);
+void            page_set(int page_num, int swappable, int pid, uint64 va);
 void            update_ref_cnts(void);
 void            page_add_ref(int page_num);
 void            update_ref_cnts(void);
 int             find_victim(void);
+int             swap(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -158,6 +159,7 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+int             handle_page_fault(void);
 
 // uart.c
 void            uartinit(void);
@@ -173,9 +175,9 @@ void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 void            uvmfirst(pagetable_t, uchar *, uint);
-uint64          uvmalloc(pagetable_t, uint64, uint64, int);
+uint64          uvmalloc(pagetable_t, int, uint64, uint64, int);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
-int             uvmcopy(pagetable_t, pagetable_t, uint64);
+int             uvmcopy(pagetable_t, pagetable_t, int, uint64);
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
