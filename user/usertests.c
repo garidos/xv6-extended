@@ -2076,14 +2076,11 @@ sbrkmuch(char *s)
     exit(1);
   }
 
-  printf("test1\n");
-
   // touch each page to make sure it exists.
   char *eee = sbrk(0);
   for(char *pp = eee-4096; pp > a; pp -= 4096)
     *pp = 1;
 
-  printf("test2\n");
 
   lastaddr = (char*) (BIG-1);
   *lastaddr = 99;
@@ -2625,7 +2622,7 @@ struct test {
   {iref, "iref"},
   {forktest, "forktest"},
   {forkfork, "forkfork"},
- // {sbrkbasic, "sbrkbasic"},
+  {sbrkbasic, "sbrkbasic"},
   {sbrkmuch, "sbrkmuch"},
   {kernmem, "kernmem"},
   {MAXVAplus, "MAXVAplus"},
@@ -2800,6 +2797,8 @@ execout(char *s)
           break;
         *(char*)(a + 4096 - 1) = 1;
       }
+
+      printf("evo sad\n");
 
       // free a few pages, in order to let exec() make some
       // progress.

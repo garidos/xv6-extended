@@ -107,7 +107,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // or 0 if not mapped.
 // Can only be used to look up user pages.
 uint64
-walkaddr(pagetable_t pagetable, uint64 va)
+walkaddr(pagetable_t pagetable, int pid, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
@@ -118,9 +118,12 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
-  if((*pte & PTE_V) == 0)
-      // TODO - handle this, as well as the same case in walk  function
-    return 0;
+  if((*pte & PTE_V) == 0) {
+      if ( (*pte & PTE_D) == PTE_D && load_page(va, pagetable, pid) == 0) {
+      } else {
+          return 0;
+      }
+  } // TODO - handle this, as well as the same case in walk  function
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -315,7 +318,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, pagetable_t new, int pid, uint64 sz)
+uvmcopy(pagetable_t old, pagetable_t new, int old_pid, int new_pid, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
@@ -325,11 +328,16 @@ uvmcopy(pagetable_t old, pagetable_t new, int pid, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0) // TODO - check if the page is on disk and load if so
-      panic("uvmcopy: page not present");
+    if((*pte & PTE_V) == 0) {
+        // TODO - check if the page is on disk and load if so
+        if ( (*pte & PTE_D) == PTE_D && load_page(i, old, old_pid) == 0) {
+        } else {
+            panic("uvmcopy: page not present");
+        }
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc(1,pid,i)) == 0)  // TODO - should be swappable?
+    if((mem = kalloc(1,new_pid,i)) == 0)  // TODO - does this also copy non swappable pages and sets them to swappable?
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
@@ -361,13 +369,13 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
 int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+copyout(pagetable_t pagetable, int pid, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr(pagetable, pid, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
@@ -386,13 +394,13 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
 int
-copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+copyin(pagetable_t pagetable, int pid, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr(pagetable, pid, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (srcva - va0);
@@ -412,14 +420,14 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 // until a '\0', or max.
 // Return 0 on success, -1 on error.
 int
-copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+copyinstr(pagetable_t pagetable, int pid, char *dst, uint64 srcva, uint64 max)
 {
   uint64 n, va0, pa0;
   int got_null = 0;
 
   while(got_null == 0 && max > 0){
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr(pagetable,pid, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (srcva - va0);

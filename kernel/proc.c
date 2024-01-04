@@ -274,11 +274,15 @@ growproc(int n)
   return 0;
 }
 
+int fork_flag = 0;
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
 fork(void)
 {
+    fork_flag = 1;
+
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
@@ -289,7 +293,7 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, np->pid, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->pid, np->pid, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -321,6 +325,8 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
+  fork_flag = 0;
 
   return pid;
 }
@@ -408,12 +414,14 @@ wait(uint64 addr)
         if(pp->state == ZOMBIE){
           // Found one.
           pid = pp->pid;
-          if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
+            release(&pp->lock); //
+          if(addr != 0 && copyout(p->pagetable, p->pid, addr, (char *)&pp->xstate,
                                   sizeof(pp->xstate)) < 0) {
-            release(&pp->lock);
+            //release(&pp->lock);
             release(&wait_lock);
             return -1;
           }
+            acquire(&pp->lock); //
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
@@ -502,6 +510,7 @@ sched(void)
 void
 yield(void)
 {
+    if ( fork_flag) return;     // TODO - dont yield until fork is done
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
@@ -634,7 +643,7 @@ either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_dst){
-    return copyout(p->pagetable, dst, src, len);
+    return copyout(p->pagetable, p->pid, dst, src, len);
   } else {
     memmove((char *)dst, src, len);
     return 0;
@@ -649,7 +658,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_src){
-    return copyin(p->pagetable, dst, src, len);
+    return copyin(p->pagetable, p->pid, dst, src, len);
   } else {
     memmove(dst, (char*)src, len);
     return 0;

@@ -18,6 +18,8 @@ extern int devintr();
 
 int timer_tick;
 
+extern char end[];
+
 void
 trapinit(void)
 {
@@ -252,6 +254,12 @@ handle_page_fault() {
     uint64 va = r_stval();
     struct proc* p = myproc();
 
+    return load_page(va, p->pagetable, p->pid);
+}
+
+int
+load_page(uint64 va, pagetable_t pg_table, int pid) {
+
     // get the pte corresponding to the virtual address that caused PF
     // check if the page was swapped
     // if not, return 1
@@ -260,18 +268,21 @@ handle_page_fault() {
     // load the page from disk in to the allocated block
     // update pte ( set valid, reset D bit, insert physical block number  )
 
-    pte_t * pte = walk(p->pagetable, va, 0);
+    pte_t * pte = walk(pg_table, va, 0);
     if ( pte == 0 ) return 1;
 
-    if ( (*pte & PTE_D) == 0 ) {
-        if (*pte & PTE_V) return 2;
-        return 1;
-    }
+    if ( (*pte & PTE_D) == 0 ) return 1;
 
     uint32 blockNo = *pte >> 10;
-    char* free_page = (char*)kalloc(1, p->pid, va);
+    // alloc as non-swappable page, to make sure that the page doesn't get swapped while its being read from swap disk
+    char* free_page = (char*)kalloc(0, 0, 0);
+    if ( free_page == 0 ) return 1;
 
     read_from_swap(blockNo, (uint64)free_page);
+
+    // reading is finished, so we can set the page to swappable and add the tag in to page_info table entry
+    int page_num = ((char*)free_page - (char*)PGROUNDUP((uint64)end)) / PGSIZE;
+    page_set(page_num, 1, pid, va);
 
     // set V bit
     *pte |= PTE_V;

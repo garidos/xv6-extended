@@ -457,7 +457,7 @@ free_swap_block(uint32 blockNo) {
     acquire(&bit_vector.bitvector_lock);
 
     uint32 page = blockNo / (PGSIZE * 8);
-    uint32 byte = blockNo % PGSIZE;
+    uint32 byte = (blockNo / 8 ) % PGSIZE;
     uint32 bit = blockNo % 8;
 
     bit_vector.bits[page][byte] |= (1 << bit);
@@ -466,6 +466,7 @@ free_swap_block(uint32 blockNo) {
 
 }
 
+int swap_flag = 0;
 
 // Writes a page from physical memory on to the swap disk
 // pa - physical address of the page to be written on to the swap disk
@@ -476,6 +477,7 @@ write_on_swap(uint64 pa) {
     // lock?
     // write the page which in 4 parts since disk block size is equal to PGSIZE/4
     // unlock?
+
 
     uint32 blockNo = allocate_swap_block();
     if ( blockNo == -1 ) {
@@ -489,7 +491,7 @@ write_on_swap(uint64 pa) {
     int blk = blockNo * 4; // 4 swap disk blocks are needed to store one page
     for ( int i = 0; i < 4; i++ ) {
 
-        write_block(blk, addr, 0);
+        write_block(blk, addr, 1);
 
         blk++;
         addr += PGSIZE / 4;
@@ -513,17 +515,19 @@ read_from_swap(uint32 blockNo, uint64 pa) {
     // unlock?
     // free the swap disk block
 
+
     uchar* addr = (uchar*)pa;
     int blk = blockNo * 4;
     for ( int i = 0; i < 4; i++ ) {
 
-        read_block(blk, addr, 0);
+        read_block(blk, addr, 1);
 
         blk++;
         addr += PGSIZE / 4;
     }
 
     free_swap_block(blockNo);
+
 
 }
 

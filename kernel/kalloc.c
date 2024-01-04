@@ -26,6 +26,7 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  int cnt;
 } kmem;
 
 // structure used for storing all the necessary information for page swapping
@@ -134,8 +135,11 @@ help_kalloc(void)
     acquire(&kmem.lock);
     r = kmem.freelist;
 
-    if(r)
+    if(r) {
         kmem.freelist = r->next;
+        kmem.cnt--;
+    }
+
     release(&kmem.lock);
 
     if(r)
@@ -159,14 +163,20 @@ void* kalloc(int swappable, int pid, uint64 va) {
     while ( kmem.freelist == 0 ) {  // TODO - maybe dont allow allocation until swap is done, so i dont have to use while here
         release(&kmem.lock);
         int status = swap();     // try to free a single page by swapping it to swap disk
-        if ( status ) return 0;
+        if ( status ) {
+            r = 0;
+            return r;
+        }
         acquire(&kmem.lock);
     }
 
     r = kmem.freelist;
 
-    if(r)
+    if(r) {
         kmem.freelist = r->next;
+        kmem.cnt--;
+    }
+
     release(&kmem.lock);
 
     if(r)
@@ -185,6 +195,7 @@ void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
+  kmem.cnt = 0;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     help_kfree(p);
@@ -219,6 +230,7 @@ kfree(void *pa)
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
+  kmem.cnt++;
   release(&kmem.lock);
 }
 
@@ -238,6 +250,7 @@ help_kfree(void *pa)
     acquire(&kmem.lock);
     r->next = kmem.freelist;
     kmem.freelist = r;
+    kmem.cnt++;
     release(&kmem.lock);
 }
 
@@ -365,11 +378,16 @@ swap(void) {
     int victim_page = find_victim();
     if ( victim_page == -1 ) return 1;
 
+
     int page = victim_page / (PGSIZE / 8); // find the page of page_info table which stores the entry for this page
     int entry = victim_page % (PGSIZE / 8);    // find the entry in that page
 
     uint32 victim_pid = page_table.page_info[page][entry] >> 38;
     uint64 victim_va = ((page_table.page_info[page][entry] >> 9) & ~(~(uint64)0 << 27 )) << 12;
+
+    // set the page as non-swappable, so it can not be chosen as swap page again while its being written on to swap disk
+    page_set(victim_page, 0,0,0);
+
 
     struct proc* p;
 
@@ -386,15 +404,20 @@ swap(void) {
      * also, V bit has to be set to 0
      */
 
+    char* victim_addr = (char*)PGROUNDUP((uint64)end) + PGSIZE * victim_page;
+
+
+
+    uint32 blockNo = write_on_swap((uint64)victim_addr);
+    if ( blockNo == -1 ) {
+        page_set(victim_page,1,victim_pid,victim_va);   // return the old info just in case
+        return 1;
+    }
+
     // clear V bit
     *victim_pte &= ~PTE_V;
     // set D bit
     *victim_pte |= PTE_D;
-
-    char* victim_addr = (char*)PGROUNDUP((uint64)end) + PGSIZE * victim_page;
-
-    uint32 blockNo = write_on_swap((uint64)victim_addr);
-    if ( blockNo == -1 ) return 1;
 
     // clear the previous value stored in rest of the pte
     *victim_pte &= ~(~(uint64)0 << 10);
