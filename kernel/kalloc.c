@@ -24,6 +24,8 @@ struct run {
   struct run *next;
 };
 
+// threshold which changes dynamically, used by thrashing prevention algorithm
+// represents the amount of pages that are free or allocated as swappable ( total amount pages in memory minus number of currently allocated non swappable pages )
 int ws_threshold;
 
 struct {
@@ -128,6 +130,8 @@ check_swappable(void* pa) {
     return 0;
 }
 
+// called by kfree
+// increments the working set threshold if the page being freed was not swappable
 void
 update_cnt(int page_num) {
 
