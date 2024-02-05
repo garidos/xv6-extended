@@ -19,14 +19,18 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+
 struct run {
   struct run *next;
 };
 
+// threshold which changes dynamically, used by thrashing prevention algorithm
+// represents the amount of pages that are free or allocated as swappable ( total amount pages in memory minus number of currently allocated non swappable pages )
+int ws_threshold;
+
 struct {
   struct spinlock lock;
   struct run *freelist;
-  int cnt;
 } kmem;
 
 // structure used for storing all the necessary information for page swapping
@@ -105,17 +109,40 @@ page_set(int page_num, int swappable, int pid, uint64 va) {
         page_table.page_info[page][entry] &= ~((uint64)1);
         // if not swappable pid and page fields are never used, so we don't set them
     } else {
-        // TODO - maybe the ref counter should be set to 0x80 when the page is first allocated PROB YES
+        // ref counter set to 0x80, not needed since it will be updated before context switch, but just in case
         page_table.page_info[page][entry] |= ((uint64) 1 << 8);
         // set the S bit - page is swappable
         page_table.page_info[page][entry] |= (uint64)1;
-        uint64 pageid = (va >> 12) & ~(~(uint64)0 << 27);   // extract the 27 page bits from virtual address
+        uint64 pageid = (va >> 12) & ~(~(uint64)0 << 27);   // extract 27 page bits from virtual address
         page_table.page_info[page][entry] |= pageid << 9;
         page_table.page_info[page][entry] |= (uint64)pid << 38;
     }
 }
 
-// TODO - when process gets killed, pages that belonged to it that are on swap disk should be removed
+// called by uvmpcopy to check if the given page is swappable or not
+int
+check_swappable(void* pa) {
+    int page_num = ((char*)pa - (char*)PGROUNDUP((uint64)end)) / PGSIZE;
+    int page = page_num / (PGSIZE / 8); // find the page of page_info table which stores the entry for this page
+    int entry = page_num % (PGSIZE / 8);    // find the entry in that page
+
+    if ( page_table.page_info[page][entry] & (uint64)1 ) return 1;
+    return 0;
+}
+
+// called by kfree
+// increments the working set threshold if the page being freed was not swappable
+void
+update_cnt(int page_num) {
+
+    int page = page_num / (PGSIZE / 8); // find the page of page_info table which stores the entry for this page
+    int entry = page_num % (PGSIZE / 8);    // find the entry in that page
+
+    if ( (page_table.page_info[page][entry] & (uint64)1) == 0 ) {   // if this block belonged to non-swappable page, increment the counter
+        ws_threshold++;
+    }
+
+}
 
 void
 page_add_ref(int page_num) {
@@ -137,7 +164,7 @@ help_kalloc(void)
 
     if(r) {
         kmem.freelist = r->next;
-        kmem.cnt--;
+        ws_threshold--;
     }
 
     release(&kmem.lock);
@@ -160,6 +187,7 @@ void* kalloc(int swappable, int pid, uint64 va) {
 
     acquire(&kmem.lock);
 
+    // while loop used to avoid race condition, since allocation is allowed while swapping
     while ( kmem.freelist == 0 ) {  // TODO - maybe dont allow allocation until swap is done, so i dont have to use while here
         release(&kmem.lock);
         int status = swap();     // try to free a single page by swapping it to swap disk
@@ -174,7 +202,7 @@ void* kalloc(int swappable, int pid, uint64 va) {
 
     if(r) {
         kmem.freelist = r->next;
-        kmem.cnt--;
+        if ( swappable == 0 ) ws_threshold--;
     }
 
     release(&kmem.lock);
@@ -195,7 +223,7 @@ void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
-  kmem.cnt = 0;
+  ws_threshold = 0;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     help_kfree(p);
@@ -217,9 +245,11 @@ kfree(void *pa)
   memset(pa, 1, PGSIZE);
 
   // reset the info on this page
-  // TODO - dont do this on pages that are freed after swapping
   int page_num = ((char*)pa - (char*)PGROUNDUP((uint64)end)) / PGSIZE;
-  // it doesn't matter what I pass as swappable argument, i just want it to reset the entry for this page
+
+  // if the page was non-swappable increase the counter(which represents thrashing threshold)
+  update_cnt(page_num);
+  // it doesn't matter what I pass as swappable argument, I just want it to reset the entry for this page
   page_set(page_num, 0, 0, 0);
   // swapping will be done when the memory is full, when every entry in the page_info table is valid,
   // so it doesn't really matter what's stored in the entry when the page is free
@@ -230,7 +260,6 @@ kfree(void *pa)
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
-  kmem.cnt++;
   release(&kmem.lock);
 }
 
@@ -250,34 +279,11 @@ help_kfree(void *pa)
     acquire(&kmem.lock);
     r->next = kmem.freelist;
     kmem.freelist = r;
-    kmem.cnt++;
+    ws_threshold++;
     release(&kmem.lock);
 }
 
 int first = 0;
-
-// Allocate one 4096-byte page of physical memory.
-// Returns a pointer that the kernel can use.
-// Returns 0 if the memory cannot be allocated.
-/*
-void *
-kalloc(void)
-{
-  struct run *r;
-
-  acquire(&kmem.lock);
-  r = kmem.freelist;
-  // TODO - If r is null, that means that there is no space left, so we have to do page swapping
-  if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
-
-  if(r)
-      memset((char *) r, 5, PGSIZE); // fill with junk
-
-
-  return (void*)r;
-}*/
 
 
 #define NUMOFENTRIES (1 << 9)
@@ -315,6 +321,8 @@ update_ref_cnts(void) {
 
     pagetable_t pt = p->pagetable;
 
+    int w_set = 0;
+
     for ( int e = 0; e < NUMOFENTRIES; e++) {
         if ( !(pt[e] & PTE_V) ) continue;
         pagetable_t pt1 = (pagetable_t) PTE2PA(pt[e]);
@@ -322,15 +330,18 @@ update_ref_cnts(void) {
             if ( !(pt1[k] & PTE_V) ) continue;
             pagetable_t pt2 = (pagetable_t) PTE2PA(pt1[k]);
             for ( int j = 0; j < NUMOFENTRIES; j++) {
-                if ( pt2[j] & PTE_V && pt2[j] & PTE_A ) {
+                if ( pt2[j] & PTE_V && pt2[j] & PTE_A && pt2[j] & PTE_U ) {     // TODO - reminder: I added a check for PTE_U bit, only user pages can be swapped
                     pt2[j] &= ~PTE_A;   // clear Access bit
                     char* pa = (char*)PTE2PA(pt2[j]);
                     int page_num = ((char*)pa - (char*)PGROUNDUP((uint64)end)) / PGSIZE;
                     page_add_ref(page_num);
+                    w_set++;
                 }
             }
         }
     }
+
+    p->working_set = w_set;
 
 }
 
@@ -424,8 +435,11 @@ swap(void) {
     // store the number of swap disk block
     *victim_pte |= (uint64)blockNo << 10;
 
+    // return the old info so that the counter will be updated accordingly
+    page_set(victim_page,1,victim_pid,victim_va);
     // free victim page
     kfree(victim_addr);
 
     return 0;
 }
+

@@ -229,7 +229,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 
   if(sz >= PGSIZE)
     panic("uvmfirst: more than a page");
-  mem = kalloc(0,0,0); // TODO - should this be swappable? no?
+  mem = kalloc(0,0,0); // not swappable
   memset(mem, 0, PGSIZE);
   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
@@ -248,7 +248,7 @@ uvmalloc(pagetable_t pagetable, int pid, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += PGSIZE){
-    mem = kalloc(1,pid,a);    // TODO - should be swappable?
+    mem = kalloc(1,pid,a);    // swappable, since this is a user page, pages needed for page tables will be allocated in mappages() if needed
     if(mem == 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -329,7 +329,7 @@ uvmcopy(pagetable_t old, pagetable_t new, int old_pid, int new_pid, uint64 sz)
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0) {
-        // TODO - check if the page is on disk and load if so
+        // check if the page is on disk and load it if needed
         if ( (*pte & PTE_D) == PTE_D && load_page(i, old, old_pid) == 0) {
         } else {
             panic("uvmcopy: page not present");
@@ -337,7 +337,8 @@ uvmcopy(pagetable_t old, pagetable_t new, int old_pid, int new_pid, uint64 sz)
     }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc(1,new_pid,i)) == 0)  // TODO - does this also copy non swappable pages and sets them to swappable?
+    int swappable = check_swappable((void*)pa); // check if the page was swappable or not
+    if((mem = kalloc(swappable,new_pid,i)) == 0)  // TODO - does this also copy non swappable pages and sets them to swappable?
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){

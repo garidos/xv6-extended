@@ -275,6 +275,7 @@ growproc(int n)
 }
 
 int fork_flag = 0;
+extern int swap_flag;
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
@@ -414,14 +415,14 @@ wait(uint64 addr)
         if(pp->state == ZOMBIE){
           // Found one.
           pid = pp->pid;
-            release(&pp->lock); //
+            //release(&pp->lock); //
           if(addr != 0 && copyout(p->pagetable, p->pid, addr, (char *)&pp->xstate,
                                   sizeof(pp->xstate)) < 0) {
-            //release(&pp->lock);
+            release(&pp->lock);
             release(&wait_lock);
             return -1;
           }
-            acquire(&pp->lock); //
+            //acquire(&pp->lock); //
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
@@ -510,10 +511,10 @@ sched(void)
 void
 yield(void)
 {
-    if ( fork_flag) return;     // TODO - dont yield until fork is done
+    if ( fork_flag  ) return;     // dont yield until fork is done
   struct proc *p = myproc();
   acquire(&p->lock);
-  p->state = RUNNABLE;
+  if ( p->state == RUNNING ) p->state = RUNNABLE;   // we check for RUNNING state, because theres a chance that the process has been suspended in thrashing_check()
   sched();
   release(&p->lock);
 }
@@ -583,6 +584,7 @@ wakeup(void *chan)
         // Process is being created.
         continue;
       }
+      //if (holding(&p->lock)) continue;
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;

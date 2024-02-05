@@ -80,7 +80,7 @@ exec(char *path, char **argv)
   // Use the second as the user stack.
   sz = PGROUNDUP(sz);
   uint64 sz1;
-  // TODO - should these be swappable? probably yes
+  // these are swappable
   if((sz1 = uvmalloc(pagetable, p->pid, sz, sz + 2*PGSIZE, PTE_W)) == 0)
     goto bad;
   sz = sz1;
@@ -120,6 +120,9 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
+
+  // initialize working set with 0
+  p->working_set = 0;
     
   // Commit to the user image.
   oldpagetable = p->pagetable;
