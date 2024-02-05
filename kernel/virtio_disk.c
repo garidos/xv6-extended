@@ -392,8 +392,6 @@ static struct bit_vector {
 
 // creates a structure used to track pages on swap disk
 // for now, the structure is a bit vector, where 1 indicates that the corresponding block on swap disk is free
-// TODO - Will I have to store procID + pageNum in this structure, so i can know what page is in what block, or maybe ill be able
-//  to store the pages position on swap disk inside of its PTE
 void
 init_swap_disk() {
 
@@ -444,7 +442,7 @@ allocate_swap_block() {
         }
     }
 
-    // TODO - Error, no free space on swap disk
+    // Error, no free space on swap disk
 
     release(&bit_vector.bitvector_lock);
 
@@ -486,6 +484,8 @@ write_on_swap(uint64 pa) {
         return -1;
     }
 
+    swap_flag = 1;
+
     // lock
     uchar* addr = (uchar*)pa;
     int blk = blockNo * 4; // 4 swap disk blocks are needed to store one page
@@ -497,6 +497,8 @@ write_on_swap(uint64 pa) {
         addr += PGSIZE / 4;
         // TODO - document how swap disk blocks are being tracked
     }
+
+    swap_flag = 0;
 
     // quarters of a page are stored on swap disk in little endian
     // swap disk block with lower number stores lower part of the page
@@ -515,6 +517,7 @@ read_from_swap(uint32 blockNo, uint64 pa) {
     // unlock?
     // free the swap disk block
 
+    swap_flag = 1;
 
     uchar* addr = (uchar*)pa;
     int blk = blockNo * 4;
@@ -526,11 +529,11 @@ read_from_swap(uint32 blockNo, uint64 pa) {
         addr += PGSIZE / 4;
     }
 
+    swap_flag = 0;
+
     free_swap_block(blockNo);
 
 
 }
 
-
-// TODO - add methods for writing and reading a page from the swap disk
 

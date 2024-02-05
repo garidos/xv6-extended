@@ -74,6 +74,7 @@ void            page_add_ref(int page_num);
 void            update_ref_cnts(void);
 int             find_victim(void);
 int             swap(void);
+int             check_swappable(void* pa);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -161,6 +162,7 @@ extern struct spinlock tickslock;
 void            usertrapret(void);
 int             handle_page_fault(void);
 int             load_page(uint64, pagetable_t, int);
+void            thrashing_check(void);
 
 // uart.c
 void            uartinit(void);

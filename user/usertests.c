@@ -957,6 +957,34 @@ twochildren(char *s)
   }
 }
 
+void mytest(char *s) {
+    for (int i = 0; i < 60; i++) {
+        int pid = fork();
+        if(pid < 0){
+            printf("%s: fork failed", s);
+            exit(1);
+        }
+        if ( pid == 0 ) {
+            int check = 5;
+            for ( int k = 0; k < 100000000; k++) {
+                check += k;
+            }
+            printf("Done: %d", i);
+            exit(0);
+        }
+    }
+
+    int xstatus;
+    for(int i = 0; i < 60; i++){
+        wait(&xstatus);
+        if(xstatus != 0) {
+            printf("%s: fork in child failed", s);
+            exit(1);
+        }
+    }
+    exit(0);
+}
+
 // concurrent forks to try to expose locking bugs.
 void
 forkfork(char *s)
@@ -2638,7 +2666,7 @@ struct test {
   {sbrklast, "sbrklast"},
   {sbrk8000, "sbrk8000"},
   {badarg, "badarg" },
-
+  //{mytest, "mytest"},
   { 0, 0},
 };
 
@@ -2797,8 +2825,6 @@ execout(char *s)
           break;
         *(char*)(a + 4096 - 1) = 1;
       }
-
-      printf("evo sad\n");
 
       // free a few pages, in order to let exec() make some
       // progress.
