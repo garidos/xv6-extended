@@ -19,6 +19,8 @@
 // the address of virtio mmio register r.
 #define R(offset,r) ((volatile uint32 *)(VIRTIO0 + VIRTIO_OFFSET * offset + (r)))
 
+int swap_flag = 0;
+
 static struct disk {
   // Name of the disk to be used with panic and spinlock
   char *name;
@@ -382,9 +384,11 @@ virtio_disk_intr(int id)
 
 
 // right now whole bit vector can fit inside one page
-// but, if the size of swap disk was to increase, id have to store the inside of multiple pages
-// that is why array of pointers to pages with bits is stored inside of swap disk structure
+// but, if the size of swap disk was to increase, it would require multiple pages
+// that is why array of pointers to pages is used
 
+// bit vector for 'blocks' of swap disk
+// block here being group of four swap disk blocks, since four blocks are needed to store one page
 static struct bit_vector {
     struct spinlock bitvector_lock;
     uint8* bits[BITVECSIZEPAGES];
@@ -405,42 +409,31 @@ init_swap_disk() {
 
 }
 
+// return first free block on swap disk ( first fit )
+// returns -1 if swap disk is full
 uint32
 allocate_swap_block() {
 
     acquire(&bit_vector.bitvector_lock);
 
 
-    for ( int i = 0; i < (BITVECSIZEPAGES - 1); i++) {  // warning because currently whole bit vector can fit inside 1 page
-        for ( uint32 j = 0; j < PGSIZE; j++) {
+     for ( int i = 0; i < BITVECSIZEPAGES; i++) {  // warning because currently whole bit vector can fit inside 1 page
+        int bound = (i == (BITVECSIZEPAGES - 1)?BITVECSIZEBYTES % PGSIZE:PGSIZE);
+        for ( uint32 j = 0; j < bound; j++) {
             if ( bit_vector.bits[i][j] == 0 ) continue;
 
             // look for the set bit inside of this byte
             for (int k = 0; k < 8; k++) {
                 if ((bit_vector.bits[i][j] & (1 << k)) != 0) {
                     // set the bit to 0, and return the block number
-                    bit_vector.bits[i][j] |= (1 << k);
+                    bit_vector.bits[i][j] &= ~(1 << k);
                     release(&bit_vector.bitvector_lock);
-                    return (uint32)i * PGSIZE * 8 + j * 8 + k;
+                    return (uint32)(i * PGSIZE * 8 + j * 8 + k);
                 }
             }
         }
     }
 
-    //check for the last page, separately, because it might not store bits of bit vector in its whole capacity
-    for ( uint32 i = 0; i < BITVECSIZEBYTES % PGSIZE; i++) {
-        if ( bit_vector.bits[BITVECSIZEPAGES - 1][i] == 0 ) continue;
-
-        // look for the set bit inside of this byte
-        for (int j = 0; j < 8; j++) {
-            if ((bit_vector.bits[BITVECSIZEPAGES - 1][i] & (1 << j)) != 0) {
-                // set the bit to 0, and return the block number
-                bit_vector.bits[BITVECSIZEPAGES - 1][i] &= ~(1 << j);
-                release(&bit_vector.bitvector_lock);
-                return (uint32)(BITVECSIZEPAGES - 1) * PGSIZE * 8 + i * 8 + j;
-            }
-        }
-    }
 
     // Error, no free space on swap disk
 
@@ -449,6 +442,7 @@ allocate_swap_block() {
     return -1;
 }
 
+// sets swap disk block of number blocNo as free
 void
 free_swap_block(uint32 blockNo) {
 
@@ -464,17 +458,14 @@ free_swap_block(uint32 blockNo) {
 
 }
 
-int swap_flag = 0;
-
 // Writes a page from physical memory on to the swap disk
 // pa - physical address of the page to be written on to the swap disk
-// returns the number of the block on swap disk, in which the page was written
+// returns the number of the block on swap disk to which the page was written
+// returns -1 on failure
 uint32
 write_on_swap(uint64 pa) {
     // allocate a block on swap disk
-    // lock?
     // write the page which in 4 parts since disk block size is equal to PGSIZE/4
-    // unlock?
 
 
     uint32 blockNo = allocate_swap_block();
@@ -486,16 +477,13 @@ write_on_swap(uint64 pa) {
 
     swap_flag = 1;
 
-    // lock
     uchar* addr = (uchar*)pa;
     int blk = blockNo * 4; // 4 swap disk blocks are needed to store one page
     for ( int i = 0; i < 4; i++ ) {
-
         write_block(blk, addr, 1);
 
         blk++;
         addr += PGSIZE / 4;
-        // TODO - document how swap disk blocks are being tracked
     }
 
     swap_flag = 0;
@@ -503,18 +491,15 @@ write_on_swap(uint64 pa) {
     // quarters of a page are stored on swap disk in little endian
     // swap disk block with lower number stores lower part of the page
 
-    // unlock
     return blockNo;
 }
 
 // Reads a page from swap disk and writes it in to the memory
-// blockNo - the number swap disk block that contains the page to be read
+// blockNo - the number of swap disk block that contains the page to be read
 // pa - starting address of the memory block in which the read page will be written
 void
 read_from_swap(uint32 blockNo, uint64 pa) {
-    // lock?
     // read page from disk while writing it into memory
-    // unlock?
     // free the swap disk block
 
     swap_flag = 1;
@@ -522,7 +507,6 @@ read_from_swap(uint32 blockNo, uint64 pa) {
     uchar* addr = (uchar*)pa;
     int blk = blockNo * 4;
     for ( int i = 0; i < 4; i++ ) {
-
         read_block(blk, addr, 1);
 
         blk++;
@@ -532,8 +516,6 @@ read_from_swap(uint32 blockNo, uint64 pa) {
     swap_flag = 0;
 
     free_swap_block(blockNo);
-
-
 }
 
 

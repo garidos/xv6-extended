@@ -67,14 +67,18 @@ void            help_kfree(void *);
 void            kfree(void *);
 void            kinit(void);
 void*           help_kalloc(void);
+
+// swapping.c
 void            init_page_table(void);
 void            page_set(int page_num, int swappable, int pid, uint64 va);
 void            update_ref_cnts(void);
 void            page_add_ref(int page_num);
-void            update_ref_cnts(void);
 int             find_victim(void);
 int             swap(void);
 int             check_swappable(void* pa);
+void            update_cnt(int);
+int             load_page(uint64, pagetable_t, int);
+void            thrashing_check(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -161,8 +165,6 @@ void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
 int             handle_page_fault(void);
-int             load_page(uint64, pagetable_t, int);
-void            thrashing_check(void);
 
 // uart.c
 void            uartinit(void);

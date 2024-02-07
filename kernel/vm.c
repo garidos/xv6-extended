@@ -119,11 +119,11 @@ walkaddr(pagetable_t pagetable, int pid, uint64 va)
   if(pte == 0)
     return 0;
   if((*pte & PTE_V) == 0) {
-      if ( (*pte & PTE_D) == PTE_D && load_page(va, pagetable, pid) == 0) {
+      if ( (*pte & PTE_S) == PTE_S && load_page(va, pagetable, pid) == 0) { // load page if it's on swap disk
       } else {
           return 0;
       }
-  } // TODO - handle this, as well as the same case in walk  function
+  }
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -187,7 +187,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       if((pte = walk(pagetable, a, 0)) == 0) {
           panic("uvmunmap: walk");
       }
-      if((*pte & PTE_V) == 0 && (*pte & PTE_D) == PTE_D) {
+      if((*pte & PTE_V) == 0 && (*pte & PTE_S) == PTE_S) {
           swapped = 1;
       } else if ( (*pte & PTE_V) == 0 ){
           panic("uvmunmap: not mapped");
@@ -330,7 +330,7 @@ uvmcopy(pagetable_t old, pagetable_t new, int old_pid, int new_pid, uint64 sz)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0) {
         // check if the page is on disk and load it if needed
-        if ( (*pte & PTE_D) == PTE_D && load_page(i, old, old_pid) == 0) {
+        if ( (*pte & PTE_S) == PTE_S && load_page(i, old, old_pid) == 0) {  // load page if on swap disk
         } else {
             panic("uvmcopy: page not present");
         }
@@ -338,7 +338,7 @@ uvmcopy(pagetable_t old, pagetable_t new, int old_pid, int new_pid, uint64 sz)
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     int swappable = check_swappable((void*)pa); // check if the page was swappable or not
-    if((mem = kalloc(swappable,new_pid,i)) == 0)  // TODO - does this also copy non swappable pages and sets them to swappable?
+    if((mem = kalloc(swappable,new_pid,i)) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){

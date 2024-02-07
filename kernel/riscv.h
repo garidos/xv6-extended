@@ -334,11 +334,11 @@ typedef uint64 *pagetable_t; // 512 PTEs
 
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
-#define SWAPHIFT 24 // bits of offset within a swap disk
-#define BITVECSIZEBITSSHIFT (SWAPHIFT - PGSHIFT) // size of swap disk bit vector in bits
-#define BITVECSIZEBYTES (( 1 << BITVECSIZEBITSSHIFT) >> 3) // size of swap disk bit vector in bytes
+#define SWAPSHIFT 24 // bits of offset within a swap disk
+
+#define BITVECSIZEBYTES (( 1 << (SWAPSHIFT - PGSHIFT)) >> 3) // size of swap disk bit vector in bytes
 #define BITVECSIZEPAGES ((BITVECSIZEBYTES + PGSIZE - 1) >> PGSHIFT) // amount of pages needed for bit vector
-#define NUMOFPAGES
+
 
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
@@ -349,8 +349,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
 #define PTE_A (1L << 6)
-#define PTE_D (1L << 8) // page is on swap disk
-// TODO - rename PTE_D; D is dirty bit
+#define PTE_S (1L << 8) // page is on swap disk
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

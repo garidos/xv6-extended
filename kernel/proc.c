@@ -290,6 +290,7 @@ fork(void)
 
   // Allocate process.
   if((np = allocproc()) == 0){
+      fork_flag = 0;
     return -1;
   }
 
@@ -297,6 +298,7 @@ fork(void)
   if(uvmcopy(p->pagetable, np->pagetable, p->pid, np->pid, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
+    fork_flag = 0;
     return -1;
   }
   np->sz = p->sz;
@@ -415,14 +417,12 @@ wait(uint64 addr)
         if(pp->state == ZOMBIE){
           // Found one.
           pid = pp->pid;
-            //release(&pp->lock); //
           if(addr != 0 && copyout(p->pagetable, p->pid, addr, (char *)&pp->xstate,
                                   sizeof(pp->xstate)) < 0) {
             release(&pp->lock);
             release(&wait_lock);
             return -1;
           }
-            //acquire(&pp->lock); //
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
@@ -679,7 +679,8 @@ procdump(void)
   [SLEEPING]  "sleep ",
   [RUNNABLE]  "runble",
   [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
+  [ZOMBIE]    "zombie",
+  [SUSPENDED] "suspended"
   };
   struct proc *p;
   char *state;

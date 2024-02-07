@@ -11,27 +11,22 @@ uint ticks;
 
 extern char trampoline[], uservec[], userret[];
 
-extern struct proc proc[NPROC];
-
 extern int swap_flag;
+
+// counts timer ticks, so thrashing can be checked on every THRASHING_PERIOD ticks
+int thrashing_tick;
+
+#define THRASHING_PERIOD 30
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
 extern int devintr();
 
-int timer_tick;
-int thrashing_tick;
-
-extern char end[];
-
-extern int ws_threshold;
-
 void
 trapinit(void)
 {
   initlock(&tickslock, "time");
-  timer_tick = 0;
   thrashing_tick = 0;
 }
 
@@ -86,7 +81,7 @@ usertrap(void)
   } else if (r_scause() == 0xf || r_scause() == 0xc || r_scause() == 0xd) { // page faults
       // It's not important which type of PF it is?
       // stval holds the virtual address that caused PF
-      if ( handle_page_fault() ) {
+      if ( handle_page_fault() < 0 ) {
           /*
           printf("usertrap(): unresolved page fault scause=%p pid=%d\n", r_scause(), p->pid);
           printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());*/
@@ -104,12 +99,11 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2) { // if(which_dev == 2 && timer_tick++ == 2) {
-      // time_tick = 0;
+  if(which_dev == 2) {
       update_ref_cnts();
 
-      if ( swap_flag == 0 ) thrashing_tick++; // thrashing_tick += 2;
-      if ( thrashing_tick == 30 && swap_flag == 0) {
+      if ( swap_flag == 0 ) thrashing_tick++;
+      if ( thrashing_tick == THRASHING_PERIOD && swap_flag == 0) {
           thrashing_check();
           thrashing_tick = 0;
       }
@@ -189,13 +183,11 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  // if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING && timer_tick++ == 2)
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING ) {
-      // timer_tick = 0;
       update_ref_cnts();
 
-      if ( swap_flag == 0 ) thrashing_tick++;   // thrashing_tick += 2;
-      if ( thrashing_tick == 30 && swap_flag == 0) {
+      if ( swap_flag == 0 ) thrashing_tick++;
+      if ( thrashing_tick == THRASHING_PERIOD && swap_flag == 0) {
           thrashing_check();
           thrashing_tick = 0;
       }
@@ -270,7 +262,8 @@ devintr()
   }
 }
 
-// returns 0 if PF was resolved, 1 otherwise
+// page fault handler
+// returns 0 if PF was resolved, negative value otherwise
 int
 handle_page_fault() {
 
@@ -278,103 +271,4 @@ handle_page_fault() {
     struct proc* p = myproc();
 
     return load_page(va, p->pagetable, p->pid);
-}
-
-int
-load_page(uint64 va, pagetable_t pg_table, int pid) {
-
-    // get the pte corresponding to the virtual address that caused PF
-    // check if the page was swapped
-    // if not, return 1
-    // get the number of block on swap disk that stores this page
-    // allocate the block in memory to store the page
-    // load the page from disk in to the allocated block
-    // update pte ( set valid, reset D bit, insert physical block number  )
-
-    pte_t * pte = walk(pg_table, va, 0);
-    if ( pte == 0 ) return 1;
-
-    if ( (*pte & PTE_D) == 0 ) return 1;
-
-    uint32 blockNo = *pte >> 10;
-    // alloc as non-swappable page, to make sure that the page doesn't get swapped while its being read from swap disk
-    char* free_page = (char*)kalloc(0, 0, 0);
-    if ( free_page == 0 ) return 1;
-
-    read_from_swap(blockNo, (uint64)free_page);
-
-    // reading is finished, so we can set the page to swappable and add the tag in to page_info table entry
-    int page_num = ((char*)free_page - (char*)PGROUNDUP((uint64)end)) / PGSIZE;
-    page_set(page_num, 1, pid, va);
-
-    // set V bit
-    *pte |= PTE_V;
-    // reset D bit
-    *pte &= ~PTE_D;
-    // add physical block number
-    // clear old value first
-    *pte &= ~(~(uint64)0 << 10);
-    *pte |= PA2PTE((uint64)free_page);
-
-    return 0;
-}
-
-
-// this function should be called periodically ( period should be greater than one used to change context )
-void
-thrashing_check(void) {
-
-    // go through every active process and calculate sum of their working sets, while noting the process with the biggest working set
-    // check if the sum exceeds allowed amount
-    // if it does, take the process with the biggest working set and suspend it
-    // if it does not, go through all the suspended processes and check if adding their working set to the current sum would exceed the allowed amount
-    // if not, bring the process back from suspension by marking it as runnable ( use the process lock )
-
-    int sum = 0;
-    struct proc* max_ws_proc = 0;
-    int proc_cnt = 0;
-
-    for(struct proc* p = proc; p < &proc[NPROC]; p++) {
-        acquire(&p->lock);  // lock is needed for process' state
-        if ( p->state == RUNNABLE || p->state == RUNNING ) {
-            sum += p->working_set;
-            if ( max_ws_proc == 0 || p->working_set > max_ws_proc->working_set ) max_ws_proc = p;   // lock is not needed for process' working_set
-            proc_cnt++;
-        }
-        release(&p->lock);
-    }
-
-    if ( max_ws_proc == 0 || proc_cnt == 1 ) return;    // if there's only one active process there's no point in suspending it
-
-
-    if ( sum > ws_threshold ) {
-
-        // suspend process with the biggest working set
-
-        //printf("Process %d suspended!\n", max_ws_proc->pid);
-
-        acquire(&max_ws_proc->lock);
-        // ws stays unchanged, so later on, we have a way to check if the process can be brought back
-        max_ws_proc->state = SUSPENDED; // yield will be called after this function anyway, so the state it was in doesn't matter
-        // since the process is not RUNNING or RUNNABLE it won't be picked by scheduler, hence it's suspended
-
-        release(&max_ws_proc->lock);
-
-    } else {
-
-        // try to wake up suspended processes
-
-        for(struct proc* p = proc; p < &proc[NPROC]; p++) {
-            acquire(&p->lock);
-            if ( p->state == SUSPENDED && sum + p->working_set <= ws_threshold ) {
-                p->state = RUNNABLE;    // so it can get scheduled
-                // its working set won't be reset
-                sum += p->working_set;
-                //printf("Process %d woken up!\n", p->pid);
-            }
-            release(&p->lock);
-        }
-
-    }
-
 }
